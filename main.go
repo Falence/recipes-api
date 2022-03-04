@@ -72,6 +72,7 @@ func main() {
 	router := gin.Default()
 	router.GET("/recipes", recipesHandler.ListRecipesHandler)
 	router.POST("/signin", authHandler.SignInHandler)
+	router.POST("/signup", authHandler.SignupHandler)
 	router.POST("/refresh", authHandler.RefreshHandler)
 
 	authorized := router.Group("/")

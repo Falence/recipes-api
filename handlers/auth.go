@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -16,9 +17,9 @@ import (
 )
 
 type (
-	AuthHandler struct{
+	AuthHandler struct {
 		collection *mongo.Collection
-		ctx context.Context
+		ctx        context.Context
 	}
 
 	Claims struct {
@@ -35,7 +36,7 @@ type (
 func NewAuthHandler(ctx context.Context, collection *mongo.Collection) *AuthHandler {
 	return &AuthHandler{
 		collection: collection,
-		ctx: ctx,
+		ctx:        ctx,
 	}
 }
 
@@ -45,10 +46,11 @@ func (handler *AuthHandler) SignInHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	user.Username = strings.ToLower(user.Username)
 	h := sha256.New()
 	cur := handler.collection.FindOne(handler.ctx, bson.M{
 		"username": user.Username,
-		"password": string(h.Sum([]byte(user.Password))),
+		"password": h.Sum([]byte(user.Password)),
 	})
 	if cur.Err() != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
@@ -73,6 +75,34 @@ func (handler *AuthHandler) SignInHandler(c *gin.Context) {
 		Expires: expirationTime,
 	}
 	c.JSON(http.StatusOK, jwtOutput)
+}
+
+func (handler *AuthHandler) SignupHandler(c *gin.Context) {
+	var user models.User
+	if err := c.ShouldBindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	user.Username = strings.ToLower(user.Username)
+	res := handler.collection.FindOne(handler.ctx, bson.M{"username": user.Username})
+	if res.Err() == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user already exists"})
+		return
+	}
+	if user.Password == "" || len(user.Password) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
+		return
+	}
+	h := sha256.New()
+	_, err := handler.collection.InsertOne(handler.ctx, bson.M{
+		"username": user.Username,
+		"password": (h.Sum([]byte(user.Password))),
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errror": "Error will signing up user"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": "New user created"})
 }
 
 func (handler *AuthHandler) RefreshHandler(c *gin.Context) {
@@ -102,7 +132,7 @@ func (handler *AuthHandler) RefreshHandler(c *gin.Context) {
 		return
 	}
 	jwtOutput := JWTOutput{
-		Token: tokenString,
+		Token:   tokenString,
 		Expires: expirationTime,
 	}
 	c.JSON(http.StatusOK, jwtOutput)
@@ -117,7 +147,7 @@ func (handler *AuthHandler) AuthMiddleware() gin.HandlerFunc {
 			claims,
 			func(token *jwt.Token) (interface{}, error) {
 				return []byte(os.Getenv("JWT_SECRET")), nil
-		})
+			})
 		if err != nil {
 			c.AbortWithStatus(http.StatusUnauthorized)
 		}
