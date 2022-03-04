@@ -37,44 +37,46 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
-var recipesHandler *handlers.RecipesHandler
+var (
+	authHandler    *handlers.AuthHandler
+	recipesHandler *handlers.RecipesHandler
+)
 
 func init() {
 	ctx := context.Background()
 	mongoOptions := options.Client().ApplyURI(os.Getenv("MONGO_URI"))
 	client, err := mongo.Connect(ctx, mongoOptions)
+	if err != nil {
+		log.Fatal("Error connecting to MongoDB: ", err)
+	}
 	if err = client.Ping(context.TODO(), readpref.Primary()); err != nil {
 		log.Fatal("err")
 	}
 	log.Println("Connected to MongoDB")
 	collection := client.Database(os.Getenv("MONGO_DATABASE")).Collection("recipes")
-	
+	collectionUsers := client.Database(os.Getenv("MONGO_DATABASE")).Collection("users")
+
 	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr:     "localhost:6379",
 		Password: "",
-		DB: 0,
+		DB:       0,
 	})
 	status := redisClient.Ping(ctx)
 	fmt.Println(status)
 
 	recipesHandler = handlers.NewRecipeHandler(ctx, collection, redisClient)
-}
-
-func AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.GetHeader("X-API-KEY") != os.Getenv("X_API_KEY") {
-			c.AbortWithStatus(401)
-		}
-		c.Next()
-	}
+	authHandler = handlers.NewAuthHandler(ctx, collectionUsers)
 }
 
 func main() {
 	router := gin.Default()
 	router.GET("/recipes", recipesHandler.ListRecipesHandler)
-	
+	router.POST("/signin", authHandler.SignInHandler)
+	router.POST("/signup", authHandler.SignupHandler)
+	router.POST("/refresh", authHandler.RefreshHandler)
+
 	authorized := router.Group("/")
-	authorized.Use(AuthMiddleware())
+	authorized.Use(authHandler.AuthMiddleware())
 	{
 		authorized.GET("/recipes/:id", recipesHandler.FindRecipeHandler)
 		authorized.POST("/recipes", recipesHandler.NewRecipeHandler)
