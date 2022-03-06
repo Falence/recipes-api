@@ -29,6 +29,8 @@ import (
 	"os"
 
 	"github.com/falence/recipes-api/handlers"
+	"github.com/gin-contrib/sessions"
+	redisStore "github.com/gin-contrib/sessions/redis"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	_ "github.com/joho/godotenv/autoload"
@@ -57,22 +59,26 @@ func init() {
 	collectionUsers := client.Database(os.Getenv("MONGO_DATABASE")).Collection("users")
 
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
+		Addr:     os.Getenv("REDIS_URI"),
 		Password: "",
 		DB:       0,
 	})
 	status := redisClient.Ping(ctx)
 	fmt.Println(status)
-
 	recipesHandler = handlers.NewRecipeHandler(ctx, collection, redisClient)
 	authHandler = handlers.NewAuthHandler(ctx, collectionUsers)
 }
 
 func main() {
+	store, _ := redisStore.NewStore(10, "tcp", os.Getenv("REDIS_URI"), "", []byte(os.Getenv("REDIS_SESSION_SECRET")))
+
 	router := gin.Default()
+	router.Use(sessions.Sessions("recipes_api", store))
+
 	router.GET("/recipes", recipesHandler.ListRecipesHandler)
 	router.POST("/signin", authHandler.SignInHandler)
 	router.POST("/signup", authHandler.SignupHandler)
+	router.POST("/signout", authHandler.SignOutHandler)
 	router.POST("/refresh", authHandler.RefreshHandler)
 
 	authorized := router.Group("/")

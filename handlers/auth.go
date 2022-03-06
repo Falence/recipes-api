@@ -3,15 +3,15 @@ package handlers
 import (
 	"context"
 	"crypto/sha256"
-	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/falence/recipes-api/models"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/xid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -56,25 +56,31 @@ func (handler *AuthHandler) SignInHandler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
-	expirationTime := time.Now().Add(10 * time.Minute)
-	claims := &Claims{
-		Username: user.Username,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		log.Fatal(err)
-		return
-	}
-	jwtOutput := JWTOutput{
-		Token:   tokenString,
-		Expires: expirationTime,
-	}
-	c.JSON(http.StatusOK, jwtOutput)
+	sessionToken := xid.New().String()
+	session := sessions.Default(c)
+	session.Set("username", user.Username)
+	session.Set("token", sessionToken)
+	session.Save()
+	c.JSON(http.StatusOK, gin.H{"message": "User signed in"})
+	// JWT implementation
+	// expirationTime := time.Now().Add(10 * time.Minute)
+	// claims := &Claims{
+	// 	Username: user.Username,
+	// 	StandardClaims: jwt.StandardClaims{
+	// 		ExpiresAt: expirationTime.Unix(),
+	// 	},
+	// }
+	// token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// 	log.Fatal(err)
+	// 	return
+	// }
+	// jwtOutput := JWTOutput{
+	// 	Token:   tokenString,
+	// 	Expires: expirationTime,
+	// }
 }
 
 func (handler *AuthHandler) SignupHandler(c *gin.Context) {
@@ -99,61 +105,85 @@ func (handler *AuthHandler) SignupHandler(c *gin.Context) {
 		"password": (h.Sum([]byte(user.Password))),
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"errror": "Error will signing up user"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error will signing up user"})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"message": "New user created"})
 }
 
+func (handler *AuthHandler) SignOutHandler(c *gin.Context) {
+	session := sessions.Default(c)
+	session.Clear()
+	session.Save()
+	c.JSON(http.StatusOK, gin.H{"message": "Signed out..."})
+}
+
 func (handler *AuthHandler) RefreshHandler(c *gin.Context) {
-	tokenValue := c.GetHeader("Authorization")
-	claims := &Claims{}
-	tkn, err := jwt.ParseWithClaims(tokenValue, claims, func(t *jwt.Token) (interface{}, error) {
-		return []byte(os.Getenv("JWT_SECRET")), nil
-	})
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return
+	session := sessions.Default(c)
+	token := xid.New().String()
+	username := session.Get("username")
+	if username == nil {
+		c.JSON(http.StatusForbidden, gin.H{"message": "Not logged in"})
 	}
-	if tkn == nil || !tkn.Valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
-	}
-	if time.Unix(claims.ExpiresAt, 0).Sub(time.Now()) > 30*time.Second {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token is not expired yet"})
-		return
-	}
-	expirationTime := time.Now().Add(5 * time.Minute)
-	claims.ExpiresAt = expirationTime.Unix()
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	jwtOutput := JWTOutput{
-		Token:   tokenString,
-		Expires: expirationTime,
-	}
-	c.JSON(http.StatusOK, jwtOutput)
+	session.Set("username", username)
+	session.Set("token", token)
+	session.Save()
+	c.JSON(http.StatusOK, gin.H{"message": username})
+	// tokenValue := c.GetHeader("Authorization")
+	// claims := &Claims{}
+	// tkn, err := jwt.ParseWithClaims(tokenValue, claims, func(t *jwt.Token) (interface{}, error) {
+	// 	return []byte(os.Getenv("JWT_SECRET")), nil
+	// })
+	// if err != nil {
+	// 	c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+	// 	return
+	// }
+	// if tkn == nil || !tkn.Valid {
+	// 	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+	// 	return
+	// }
+	// if time.Unix(claims.ExpiresAt, 0).Sub(time.Now()) > 30*time.Second {
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": "Token is not expired yet"})
+	// 	return
+	// }
+	// expirationTime := time.Now().Add(5 * time.Minute)
+	// claims.ExpiresAt = expirationTime.Unix()
+	// token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// 	return
+	// }
+	// jwtOutput := JWTOutput{
+	// 	Token:   tokenString,
+	// 	Expires: expirationTime,
+	// }
+	// c.JSON(http.StatusOK, jwtOutput)
 }
 
 func (handler *AuthHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenValue := c.GetHeader("Authorization")
-		claims := &Claims{}
-		tkn, err := jwt.ParseWithClaims(
-			tokenValue,
-			claims,
-			func(token *jwt.Token) (interface{}, error) {
-				return []byte(os.Getenv("JWT_SECRET")), nil
-			})
-		if err != nil {
-			c.AbortWithStatus(http.StatusUnauthorized)
-		}
-		if tkn == nil || !tkn.Valid {
-			c.AbortWithStatus(http.StatusUnauthorized)
+		session := sessions.Default(c)
+		sessionToken := session.Get("token")
+		if sessionToken == nil {
+			c.JSON(http.StatusForbidden, gin.H{"message": "Not logged in"})
+			c.Abort()
 		}
 		c.Next()
+		// tokenValue := c.GetHeader("Authorization")
+		// claims := &Claims{}
+		// tkn, err := jwt.ParseWithClaims(
+		// 	tokenValue,
+		// 	claims,
+		// 	func(token *jwt.Token) (interface{}, error) {
+		// 		return []byte(os.Getenv("JWT_SECRET")), nil
+		// 	})
+		// if err != nil {
+		// 	c.AbortWithStatus(http.StatusUnauthorized)
+		// }
+		// if tkn == nil || !tkn.Valid {
+		// 	c.AbortWithStatus(http.StatusUnauthorized)
+		// }
+		// c.Next()
 	}
 }
